@@ -21,7 +21,7 @@ from thop import profile
 from networks import create_net
 from muon import SingleDeviceMuonWithAuxAdam
 
-parser = argparse.ArgumentParser(description='PredRNet: Neural Prediction Errors for Abstract Visual Reasoning')
+parser = argparse.ArgumentParser(description='DSRF: A Dynamic and Scalable Reasoning Framework for Solving RPMs')
 
 # dataset settings
 parser.add_argument('--dataset-dir', default='datasets/',
@@ -85,6 +85,11 @@ parser.add_argument('--show-detail', action='store_true', default='False',
 parser.add_argument('--subset', default='None', type=str,
                     help='subset selection for dataset')
 
+# DSRF settings
+parser.add_argument('--dsrf-scale', default='S', choices=['S','M','L'],
+                    help='DSRF variant: S=2-1, M=4-2-1, L=8-4-1')
+parser.add_argument('--dsrf-light', action='store_true',
+                    help='Use light channels (per-view=16). Default full per-view=32.')
 
 def random_rotate(img, p=0.1):
     if p > random.random():

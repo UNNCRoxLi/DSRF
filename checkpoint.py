@@ -24,9 +24,6 @@ def load_checkpoint(args, model, optimizer=None, verbose=True):
     # if "best_acc" in checkpoint:
     #     best_acc = checkpoint['best_acc']
 
-    # checkpoint1 = torch.load("/media/Chengtai_Li/hhee/CVPR25/I-RAVEN/HCV-M/I-RAVEN-predrnet_raven-prb3-b0.1c0.1-imsz80-wd1e-05-ep200-seed3407/model_best.pth.tar")
-    # model.load_state_dict(checkpoint1['state_dict'], False)
-
     ######
     # state_dict = checkpoint['state_dict']
     # new_state_dict = {}

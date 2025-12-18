@@ -13,29 +13,6 @@ from .network_utils import (
     convert_to_rpm_matrix_v6,
     LinearNormAct
 )
-from .HCVARR import HCVARR
-from .MSE import MSE
-from .Pred import Pred
-from .SCAR import RelationNetworkSCAR
-from .HCV import HCV
-from .HGRC import HGRC
-from .DARR import DARR
-from .new_HGRC import NewHGRC
-from .WP import WP
-from .MM import MM
-from .MRnet import MRNet
-
-# class PositionalEncoding(nn.Module):
-#     def __init__(self, d_model, max_len=5000, dropout=0.1):
-#         super(PositionalEncoding, self).__init__()
-#         self.dropout = nn.Dropout(p=dropout)
-        
-#         self.position_embeddings = nn.Parameter(torch.zeros(1, max_len, d_model))
-#         nn.init.xavier_uniform_(self.position_embeddings)
-
-#     def forward(self, x):
-#         x = x + self.position_embeddings[:, :x.size(1), :]
-#         return x
 
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, max_len=5000):
@@ -322,11 +299,12 @@ class PredictiveReasoningBlock(nn.Module):
         return out, errors
     
 
-class PredRNet(nn.Module):
+class DSRF(nn.Module):
 
     def __init__(self, num_filters=32, block_drop=0.0, classifier_drop=0.0, 
                  classifier_hidreduce=1.0, in_channels=1, num_classes=8, 
-                 num_extra_stages=1, reasoning_block=PredictiveReasoningBlock,
+                #  num_extra_stages=1, reasoning_block=PredictiveReasoningBlock,
+                 dsrf_pyramid=(8,4,1), dsrf_per_view=32,
                  num_contexts=8):
 
         super().__init__()
@@ -347,8 +325,6 @@ class PredRNet(nn.Module):
                     block=ResBlock, dropout=block_drop,
                 )
             )
-        # self.MSE = MSE()
-        # self.WP = WP()
         # -------------------------------------------------------------------
 
         
@@ -453,9 +429,6 @@ class PredRNet(nn.Module):
 
         for l in range(4):
             x = getattr(self, "res"+str(l))(x)
-        # x = self.HCVARR(x)
-        # x = self.MSE(x)
-        # x = self.WP(x)
 
         if self.num_contexts == 8:
             _, c, h, w = x.size()
@@ -531,33 +504,10 @@ class PredRNet(nn.Module):
         return out.view(b, self.ou_channels), errors
     
 
-def predrnet_raven(**kwargs):
-    return PredRNet(**kwargs, num_contexts=8)
+def DSRF_raven(**kwargs):
+    return DSRF(**kwargs, num_contexts=8)
 
 
-def predrnet_analogy(**kwargs):
-    return PredRNet(**kwargs, num_contexts=5, num_classes=4)
+def DSRF_analogy(**kwargs):
+    return DSRF(**kwargs, num_contexts=5, num_classes=4)
 
-def pred(**kwargs):
-    return Pred(**kwargs, num_contexts=8)
-
-def scar(**kwargs):
-    return RelationNetworkSCAR(**kwargs, num_contexts=8, num_classes=8)
-
-def hcv(**kwargs):
-    return HCV(**kwargs)
-
-def hgrc(**kwargs):
-    return HGRC(**kwargs, num_contexts=8)
-
-def darr(**kwargs):
-    return DARR(**kwargs, num_contexts=8)
-
-def newhgrc(**kwargs):
-    return NewHGRC(**kwargs, num_contexts=8)
-
-def mm(**kwargs):
-    return MM(**kwargs, num_contexts=8)
-
-def mrnet(**kwargs):
-    return MRNet(**kwargs, num_contexts=8)
