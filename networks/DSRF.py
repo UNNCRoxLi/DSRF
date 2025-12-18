@@ -311,6 +311,9 @@ class DSRF(nn.Module):
 
         channels = [num_filters, num_filters*2, num_filters*3, num_filters*4]
         strides = [2, 2, 2, 2]
+        self.dsrf_pyramid = list(dsrf_pyramid)
+        self.dsrf_per_view = dsrf_per_view
+        depth = len(self.dsrf_pyramid)
 
         # -------------------------------------------------------------------
         # frame encoder 
