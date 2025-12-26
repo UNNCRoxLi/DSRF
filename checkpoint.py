@@ -18,11 +18,11 @@ def load_checkpoint(args, model, optimizer=None, verbose=True):
     start_epoch = 0
     best_acc = 0
 
-    # if "epoch" in checkpoint:
-    #     start_epoch = checkpoint['epoch']
+    if "epoch" in checkpoint:
+        start_epoch = checkpoint['epoch']
 
-    # if "best_acc" in checkpoint:
-    #     best_acc = checkpoint['best_acc']
+    if "best_acc" in checkpoint:
+        best_acc = checkpoint['best_acc']
 
     ######
     # state_dict = checkpoint['state_dict']

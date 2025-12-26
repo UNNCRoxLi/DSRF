@@ -61,6 +61,8 @@ parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
 parser.add_argument('--lr', '--learning-rate', default=0.001, type=float,
                     metavar='LR', help='initial learning rate', dest='lr')
+parser.add_argument('--muon-lr', default=0.003, type=float,
+                    help='learning rate for muon optimizer')
 parser.add_argument('--wd', '--weight-decay', default=1e-5, type=float,
                     metavar='W', help='weight decay (default: 1e-5)',
                     dest='weight_decay')
@@ -110,14 +112,6 @@ def get_data_loader(args, data_split = 'train', transform = None, subset = None)
 
     if args.dataset_name in ('RAVEN', 'RAVEN-FAIR', 'I-RAVEN'):
         from data import RAVEN as create_dataset
-    elif 'PGM' in args.dataset_name:
-        from data import PGM as create_dataset
-    elif 'Analogy' in args.dataset_name:
-        from data import Analogy as create_dataset
-    elif 'CLEVR-Matrix' in args.dataset_name:
-        from data import CLEVR_MATRIX as create_dataset
-    elif 'RPV' in args.dataset_name:
-        from data import RPV as create_dataset
     else:
         raise ValueError(
             "not supported dataset_name = {}".format(args.dataset_name)
@@ -231,12 +225,7 @@ def main_worker(args):
     args.log_file.write("Network - " + args.arch + "\n")
     args.log_file.write("Params - %.6fM" % (params / 1e6) + "\n")
     args.log_file.write("FLOPs - %.6fG" % (flops / 1e9) + "\n")
-    # torch.save(model.state_dict(), 'xx.pt')
-    # for params in model.state_dict():
-    #     print(params)
 
-
-    # return 0
     if args.evaluate == False:
         # print(model)
         print('e')
@@ -253,13 +242,13 @@ def main_worker(args):
 
     # adam
     # optimizer = torch.optim.Adam(model.parameters(), lr = args.lr, weight_decay = args.weight_decay)
-    # muon
+    # # muon
     classifier_names = [name for name, _ in model.named_parameters() if "classifier" in name]
     classifier_params = {p for name, p in model.named_parameters() if name in classifier_names}
     param_groups = [
         dict(params=list(classifier_params), use_muon=False, lr=args.lr, weight_decay=args.weight_decay),
         dict(params=[p for name, p in model.named_parameters() if p not in classifier_params and p.ndim >= 2],
-             use_muon=True, lr=0.003, weight_decay=args.weight_decay
+             use_muon=True, lr=args.muon_lr, weight_decay=args.weight_decay
              ),
         dict(params=[p for name, p in model.named_parameters() if p not in classifier_params and p.ndim < 2],
              use_muon=False, lr=args.lr, weight_decay=args.weight_decay),
@@ -274,7 +263,7 @@ def main_worker(args):
     tr_transform = transforms.Compose([
         transforms.RandomHorizontalFlip(p=0.3),
         transforms.RandomVerticalFlip(p=0.3),
-        # transforms.Lambda(random_rotate),
+        transforms.Lambda(random_rotate),
         ToTensor()
     ])
     ts_transform = transforms.Compose([
@@ -303,11 +292,56 @@ def main_worker(args):
     cont_epoch = 0
     best_epoch = 0
     test_acc2  = 0
-    
+    trigger_epochs = {'S': 90, 'M': 90, 'L': 70}
+    reset_trigger_epoch = trigger_epochs.get(args.dsrf_scale, 90)
 
     for epoch in range(args.start_epoch, args.epochs):
         
         args.log_file = open(log_path, mode="a")
+
+        if epoch == reset_trigger_epoch:
+            if hasattr(model, 'module'):
+                m = model.module
+            else:
+                m = model
+
+            reset_targets = [
+                m.channel_reducer,
+                m.reducers,
+                m.atten_last,
+                m.classifier
+            ]
+
+            for target in reset_targets:
+                if isinstance(target, torch.nn.ModuleList):
+                    modules = target
+                else:
+                    modules = [target]
+                
+                for module in modules:
+                    for sub_m in module.modules():
+                        if isinstance(sub_m, (torch.nn.Linear, torch.nn.Conv2d)):
+                            torch.nn.init.trunc_normal_(sub_m.weight, std=0.01)
+                            if sub_m.bias is not None:
+                                torch.nn.init.constant_(sub_m.bias, 0)
+                        elif isinstance(sub_m, (torch.nn.BatchNorm2d, torch.nn.GroupNorm, torch.nn.LayerNorm, torch.nn.BatchNorm1d)):
+                            torch.nn.init.constant_(sub_m.weight, 1.0)
+                            torch.nn.init.constant_(sub_m.bias, 0)
+            
+            classifier_names = [name for name, _ in model.named_parameters() if "classifier" in name]
+            classifier_params = {p for name, p in model.named_parameters() if name in classifier_names}
+            
+            current_lr = 0.0005
+            
+            param_groups = [
+                dict(params=list(classifier_params), use_muon=False, lr=current_lr, weight_decay=args.weight_decay),
+                dict(params=[p for name, p in model.named_parameters() if p not in classifier_params and p.ndim >= 2],
+                    use_muon=True, lr=current_lr, weight_decay=args.weight_decay),
+                dict(params=[p for name, p in model.named_parameters() if p not in classifier_params and p.ndim < 2],
+                    use_muon=False, lr=current_lr, weight_decay=args.weight_decay),
+            ]
+            
+            optimizer = SingleDeviceMuonWithAuxAdam(param_groups)
 
         # train for one epoch
         train(tr_loader, model, criterion, optimizer, epoch, args)
@@ -340,7 +374,7 @@ def main_worker(args):
         epoch_msg = ("----------- Best Acc at [{}]: Valid {:.3f} Test {:.3f} Continuous Epoch {} -----------".format(
             best_epoch, best_acc1, test_acc2, cont_epoch)
         )
-        print(epoch_msg)
+        print(epoch_msg, flush=True)
 
         args.log_file.write(epoch_msg + "\n")
         args.log_file.close()
@@ -359,6 +393,8 @@ def train(data_loader, model, criterion, optimizer, epoch, args):
 
     param_groups = optimizer.param_groups[0]
     curr_lr = param_groups["lr"]
+    param_muon_groups = optimizer.param_groups[1]
+    curr_muon_lr = param_muon_groups["lr"]
 
     # switch to train mode
     model.train()
@@ -379,22 +415,24 @@ def train(data_loader, model, criterion, optimizer, epoch, args):
 
         # compute output
         if args.fp16:
-            with torch.cuda.amp.autocast():
-                output, errors = model(images, train=True)
+            with torch.amp.autocast('cuda'):
+                output = model(images, train=True)
 
             loss = criterion(output, target)
                 
             args.scaler.scale(loss).backward()
+            args.scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             args.scaler.step(optimizer)
             args.scaler.update()
         else:
-            output, errors = model(images, train=True)
+            output = model(images, train=True)
             loss = criterion(output, target)
             # compute gradient and do SGD step
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             loss.backward()
             optimizer.step()
 
-        # measure accuracy and record loss
         acc1 = accuracy(output, target)
         losses.update(loss.item(), images.size(0))
         top1.update(acc1[0][0], images.size(0))
@@ -405,15 +443,13 @@ def train(data_loader, model, criterion, optimizer, epoch, args):
 
         if i % args.print_freq == 0 or i == len(data_loader) - 1:
             epoch_msg = progress.get_message(i+1)
-            epoch_msg += ("\tLr  {:.4f}".format(curr_lr))
-            # epoch_msg += ("\tErrors  {:.20e}".format(errors))
-            print(epoch_msg)
+            epoch_msg += ("\tLr {:.4f}   MuonLr {:.4f}".format(curr_lr, curr_muon_lr))
+            print(epoch_msg, flush=True)
 
             args.log_file.write(epoch_msg + "\n")
 
 
 def validate(data_loader, model, criterion, args, valid_set='Valid'):
-    output_file = "incorrect_samples.txt" 
     if 'RAVEN' in args.dataset_name:
         acc_regime = init_acc_regime(args.dataset_name)
     else:
@@ -443,23 +479,13 @@ def validate(data_loader, model, criterion, args, valid_set='Valid'):
             images = normalize_image(images)
 
             # compute outputs
-            output, errors = model(images)
+            output = model(images)
             
             loss = criterion(output, target)
             losses.update(loss.item(), images.size(0))
 
-            # measure accuracy and record loss
             acc1 = accuracy(output, target)
 
-            # # measure accuracy and record loss
-            # acc1, idxs = accuracy(output, target)
-            # # print(output.shape)
-            
-            # with open(output_file, "a") as f:
-            #     for idx in idxs:
-            #         f.write(data_file[idx] + ";"+str(torch.argmax(output[idx]).item())+  "\n")  # Write each entry followed by a newline
-
-            
             top1.update(acc1[0][0], images.size(0))
 
             if acc_regime is not None:
@@ -471,8 +497,7 @@ def validate(data_loader, model, criterion, args, valid_set='Valid'):
 
             if i % args.print_freq == 0 or i == len(data_loader) - 1:
                 epoch_msg = progress.get_message(i+1)
-                # epoch_msg += ("\tErrors  {:.20e}".format(errors))
-                print(epoch_msg)
+                print(epoch_msg, flush=True)
 
         if acc_regime is not None:
             for key in acc_regime.keys():
@@ -493,17 +518,15 @@ def validate(data_loader, model, criterion, args, valid_set='Valid'):
             valid_set=valid_set, mean_acc=mean_acc
         )
 
-        print(epoch_msg)
+        print(epoch_msg, flush=True)
         
         if args.evaluate == False:
             args.log_file.write(epoch_msg + "\n")
 
 
-    # if args.show_detail:
-    #     for key, val in acc_regime.items():
-    #         print("configuration [{}] Acc {:.3f}".format(key, val))
-
-
+    if args.show_detail:
+        for key, val in acc_regime.items():
+            print("configuration [{}] Acc {:.3f}".format(key, val))
     return mean_acc
 
 
